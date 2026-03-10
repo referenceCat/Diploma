@@ -8,6 +8,7 @@
 ## Bookmarks
 - [toolchain](https://habr.com/ru/articles/854050/)
 - [uploader](https://docs.mikron.ru/wiki/dev-tools/soft/uploader.html)
+- [debouncer IC](https://www.chipdip.ru/product/mc14490dwg-ic-digital-contact-bounce-on-semiconductor-8051233161)
 
 ## rev. 1
 ![Schematics](./images/rev1.png)
