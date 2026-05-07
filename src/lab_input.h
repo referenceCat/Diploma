@@ -13,41 +13,35 @@
 #include "mik32_hal_gpio.h"
 #include "mik32_hal_spi.h"
 
-#define sW1_PORT GPIO_1
-#define sW2_PORT GPIO_1
-#define sW3_PORT GPIO_1
-#define sW4_PORT GPIO_1
-#define sW5_PORT GPIO_2
-#define sW6_PORT GPIO_2
-#define sW7_PORT GPIO_1
-#define sW8_PORT GPIO_1
+#define LI_sW1_PORT GPIO_1
+#define LI_sW2_PORT GPIO_1
+#define LI_sW3_PORT GPIO_1
+#define LI_sW4_PORT GPIO_1
+#define LI_sW5_PORT GPIO_2
+#define LI_sW6_PORT GPIO_2
+#define LI_sW7_PORT GPIO_1
+#define LI_sW8_PORT GPIO_1
 
-#define sW1_PIN 2
-#define sW2_PIN 0
-#define sW3_PIN 1
-#define sW4_PIN 4
-#define sW5_PIN 6
-#define sW6_PIN 7
-#define sW7_PIN 3
-#define sW8_PIN 6
+#define LI_sW1_PIN 2
+#define LI_sW2_PIN 0
+#define LI_sW3_PIN 1
+#define LI_sW4_PIN 4
+#define LI_sW5_PIN 6
+#define LI_sW6_PIN 7
+#define LI_sW7_PIN 3
+#define LI_sW8_PIN 6
 
 #define MIK32V2
 
-#define BTN0_BIT
+#define LI_BTN0_BIT
 
 // must be called at 1 kHz
-void update();
+void li_update();
 
 // must be called once
-void init();
+void li_init();
 
-uint32_t getLeversBitmask();
-
-uint32_t getButtonsBitmask();
-
-uint16_t getPotValueMv(uint8_t pot);
-
-enum ButtonIndexes {
+enum LI_ButtonIndexes {
 	B_0,
 	B_1,
 	B_2,
@@ -63,7 +57,7 @@ enum ButtonIndexes {
 	B_ENC
 };
 
-const uint32_t buttonsMap[] = {
+static const uint32_t li_buttons_map[] = {
 		9, // B_0
 		6, // B_1
 		5,
@@ -79,127 +73,127 @@ const uint32_t buttonsMap[] = {
 		8 + 4  // B_ENC TODO value is likely wrong
 };
 
-uint8_t getButtonState(enum ButtonIndexes button);
+uint8_t li_get_button_state(enum LI_ButtonIndexes button);
 
-static uint32_t updateCounter		= 0;
-static uint32_t buttonsStateBitmask	= 0; // b0, ... b9, bA, bB, bEnc
-static uint32_t leversStateBitmask	= 0;
-static uint32_t potValueLeft		= 0;
-static uint32_t potValueRight		= 0;
+static uint32_t li_update_counter			= 0;
+static uint32_t li_buttons_state_bitmask	= 0; // b0, ... b9, bA, bB, bEnc
+static uint32_t li_levers_state_bitmask		= 0;
+static uint32_t li_pot_value_left			= 0;
+static uint32_t li_pot_value_right			= 0;
 
 static ADC_HandleTypeDef hadc;
 static SPI_HandleTypeDef hspi0;
 
 // https://habr.com/ru/articles/836796/
-static void pollPotentiometers() {
+static void li_poll_potentiometers() {
 	/* Получение значения с разных каналов */
-	        ADC_SEL_CHANNEL(hadc.Instance, 0);
+	        ADC_SEL_CHANNEL(hadc.Instance, 1); // set ch1 (P1.7)
 	        HAL_ADC_SINGLE(hadc.Instance); // Первое измерение для переключение на канал 0.
 	        HAL_ADC_WaitValid(&hadc);
 
-	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 2); // P1.7 ch1
-	        potValueLeft = HAL_ADC_WaitAndGetValue(&hadc); /* Ожидание и чтение актуальных данных (режим одиночного преобразования) */
+	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 2); // read ch1 (P1.7), then set channel to 2
+	        li_pot_value_left = HAL_ADC_WaitAndGetValue(&hadc);
 
-	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 1); // P0.2 ch2
-	        potValueRight = HAL_ADC_WaitAndGetValue(&hadc); /* Ожидание и чтение актуальных данных (режим одиночного преобразования) */
+	        HAL_ADC_SINGLE(hadc.Instance); // read ch2 (P0.2)
+	        li_pot_value_right = HAL_ADC_WaitAndGetValue(&hadc);
 }
 
-uint8_t getButtonState(enum ButtonIndexes button) {
-	return (buttonsStateBitmask & (1 << button)) ? 1 : 0;
+uint8_t li_get_button_state(enum LI_ButtonIndexes button) {
+	return (li_buttons_state_bitmask & (1 << button)) ? 1 : 0;
 }
 
 
-static void pollLevers() {
-	leversStateBitmask = 0;
-	leversStateBitmask |= (sW1_PORT->STATE & (1 << sW1_PIN)) << 0;
-	leversStateBitmask |= (sW2_PORT->STATE & (1 << sW2_PIN)) << 1;
-	leversStateBitmask |= (sW3_PORT->STATE & (1 << sW3_PIN)) << 2;
-	leversStateBitmask |= (sW4_PORT->STATE & (1 << sW4_PIN)) << 3;
-	leversStateBitmask |= (sW5_PORT->STATE & (1 << sW5_PIN)) << 4;
-	leversStateBitmask |= (sW6_PORT->STATE & (1 << sW6_PIN)) << 5;
-	leversStateBitmask |= (sW7_PORT->STATE & (1 << sW7_PIN)) << 6;
-	leversStateBitmask |= (sW8_PORT->STATE & (1 << sW8_PIN)) << 7;
+static void li_poll_levers() {
+	li_levers_state_bitmask = 0;
+	li_levers_state_bitmask |= ((LI_sW1_PORT->STATE >> LI_sW1_PIN) & 1) << 0;
+	li_levers_state_bitmask |= ((LI_sW2_PORT->STATE >> LI_sW2_PIN) & 1) << 1;
+	li_levers_state_bitmask |= ((LI_sW3_PORT->STATE >> LI_sW3_PIN) & 1) << 2;
+	li_levers_state_bitmask |= ((LI_sW4_PORT->STATE >> LI_sW4_PIN) & 1) << 3;
+	li_levers_state_bitmask |= ((LI_sW5_PORT->STATE >> LI_sW5_PIN) & 1) << 4;
+	li_levers_state_bitmask |= ((LI_sW6_PORT->STATE >> LI_sW6_PIN) & 1) << 5;
+	li_levers_state_bitmask |= ((LI_sW7_PORT->STATE >> LI_sW7_PIN) & 1) << 6;
+	li_levers_state_bitmask |= ((LI_sW8_PORT->STATE >> LI_sW8_PIN) & 1) << 7;
 }
 
-// https://habr.com/ru/articles/832228/
-static void pollButtons() {
-	uint16_t data = 0;
+//// https://habr.com/ru/articles/832228/
+//static void pollButtons() {
+//	uint16_t data = 0;
+//
+//    /* Начало передачи в ручном режиме управления CS */
+//    if (hspi0.Init.ManualCS == SPI_MANUALCS_ON)
+//    {
+//        __HAL_SPI_ENABLE(&hspi0);
+//        HAL_SPI_CS_Enable(&hspi0, SPI_CS_0);
+//    }
+//
+//    /* Передача и прием данных */
+//    HAL_StatusTypeDef SPI_Status = HAL_SPI_Exchange(&hspi0, (uint8_t*)&data, (uint8_t*)&data, 2, SPI_TIMEOUT_DEFAULT); // sending data doesnt do anything
+//    if (SPI_Status != HAL_OK) {
+//    	// ignore error
+//        HAL_SPI_ClearError(&hspi0);
+//    }
+//
+//    /* Конец передачи в ручном режиме управления CS */
+//    if (hspi0.Init.ManualCS == SPI_MANUALCS_ON)
+//    {
+//        HAL_SPI_CS_Disable(&hspi0);
+//        __HAL_SPI_DISABLE(&hspi0);
+//    }
+//
+//    buttonsStateBitmask = 0;
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_0]) & 1) << B_0);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_1]) & 1) << B_1);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_2]) & 1) << B_2);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_3]) & 1) << B_3);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_4]) & 1) << B_4);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_5]) & 1) << B_5);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_6]) & 1) << B_6);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_7]) & 1) << B_7);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_8]) & 1) << B_8);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_9]) & 1) << B_9);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_A]) & 1) << B_A);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_B]) & 1) << B_B);
+//    buttonsStateBitmask |= (((data >> buttonsMap[B_ENC]) & 1) << B_ENC);
+//}
 
-    /* Начало передачи в ручном режиме управления CS */
-    if (hspi0.Init.ManualCS == SPI_MANUALCS_ON)
-    {
-        __HAL_SPI_ENABLE(&hspi0);
-        HAL_SPI_CS_Enable(&hspi0, SPI_CS_0);
-    }
-
-    /* Передача и прием данных */
-    HAL_StatusTypeDef SPI_Status = HAL_SPI_Exchange(&hspi0, (uint8_t*)&data, (uint8_t*)&data, 2, SPI_TIMEOUT_DEFAULT); // sending data doesnt do anything
-    if (SPI_Status != HAL_OK) {
-    	// ignore error
-        HAL_SPI_ClearError(&hspi0);
-    }
-
-    /* Конец передачи в ручном режиме управления CS */
-    if (hspi0.Init.ManualCS == SPI_MANUALCS_ON)
-    {
-        HAL_SPI_CS_Disable(&hspi0);
-        __HAL_SPI_DISABLE(&hspi0);
-    }
-
-    buttonsStateBitmask = 0;
-    buttonsStateBitmask |= (((data >> buttonsMap[B_0]) & 1) << B_0);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_1]) & 1) << B_1);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_2]) & 1) << B_2);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_3]) & 1) << B_3);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_4]) & 1) << B_4);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_5]) & 1) << B_5);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_6]) & 1) << B_6);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_7]) & 1) << B_7);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_8]) & 1) << B_8);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_9]) & 1) << B_9);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_A]) & 1) << B_A);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_B]) & 1) << B_B);
-    buttonsStateBitmask |= (((data >> buttonsMap[B_ENC]) & 1) << B_ENC);
-}
-
-void update() {
-	updateCounter++;
+void li_update() {
+	li_update_counter++;
 
 	// 100 Hz
-	if (updateCounter % 10 == 0) {
-		pollButtons();
+	if (li_update_counter % 10 == 0) {
+		// pollButtons();
 	}
 
 	// 33 Hz
-	if (updateCounter % 30 == 0) {
-		pollLevers();
+	if (li_update_counter % 30 == 0) {
+		li_poll_levers();
 	}
 
-	if (updateCounter % 10 == 0) {
-		pollPotentiometers();
+	if (li_update_counter % 10 == 0) {
+		li_poll_potentiometers();
 	}
 }
 
-void init() {
+void li_init() {
 	// TODO pins should not be hardcoded but passed as config struct
 	// TODO lever pin are swapped on schematics (1 to 8 instead of 8 to 1)
-	sW1_PORT->DIRECTION_IN |= 1 << sW1_PIN;
-	sW2_PORT->DIRECTION_IN |= 1 << sW2_PIN;
-	sW3_PORT->DIRECTION_IN |= 1 << sW3_PIN;
-	sW4_PORT->DIRECTION_IN |= 1 << sW4_PIN;
-	sW5_PORT->DIRECTION_IN |= 1 << sW5_PIN;
-	sW6_PORT->DIRECTION_IN |= 1 << sW6_PIN;
-	sW7_PORT->DIRECTION_IN |= 1 << sW7_PIN;
-	sW8_PORT->DIRECTION_IN |= 1 << sW8_PIN;
+	LI_sW1_PORT->DIRECTION_IN |= 1 << LI_sW1_PIN;
+	LI_sW2_PORT->DIRECTION_IN |= 1 << LI_sW2_PIN;
+	LI_sW3_PORT->DIRECTION_IN |= 1 << LI_sW3_PIN;
+	LI_sW4_PORT->DIRECTION_IN |= 1 << LI_sW4_PIN;
+	LI_sW5_PORT->DIRECTION_IN |= 1 << LI_sW5_PIN;
+	LI_sW6_PORT->DIRECTION_IN |= 1 << LI_sW6_PIN;
+	LI_sW7_PORT->DIRECTION_IN |= 1 << LI_sW7_PIN;
+	LI_sW8_PORT->DIRECTION_IN |= 1 << LI_sW8_PIN;
 
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW1_PIN * 2 + 1);
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW2_PIN * 2 + 1);
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW3_PIN * 2 + 1);
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW4_PIN * 2 + 1);
-	PAD_CONFIG->PORT_2_PUPD |= 1 << (sW5_PIN * 2 + 1);
-	PAD_CONFIG->PORT_2_PUPD |= 1 << (sW6_PIN * 2 + 1);
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW7_PIN * 2 + 1);
-	PAD_CONFIG->PORT_1_PUPD |= 1 << (sW8_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW1_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW2_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW3_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW4_PIN * 2 + 1);
+	PAD_CONFIG->PORT_2_PUPD |= 1 << (LI_sW5_PIN * 2 + 1);
+	PAD_CONFIG->PORT_2_PUPD |= 1 << (LI_sW6_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW7_PIN * 2 + 1);
+	PAD_CONFIG->PORT_1_PUPD |= 1 << (LI_sW8_PIN * 2 + 1);
 
 	hadc.Instance = ANALOG_REG;
 	hadc.Init.Sel = ADC_CHANNEL0;
@@ -224,17 +218,17 @@ void init() {
 	hspi0.Init.ChipSelect = SPI_CS_0;
 }
 
-uint32_t getLeversBitmask() {
-	return leversStateBitmask;
+uint32_t li_get_levers_bitmask() {
+	return li_levers_state_bitmask;
 }
 
-enum Pot {
+enum LI_Pot {
 	Left = 0,
 	Right = 1
 };
 
-uint16_t getPotValueMv(uint8_t pot) {
-	return pot ? (potValueRight * 1300 / 4096) : (potValueLeft * 1300 / 4096);
+uint16_t li_get_pot_value_mv(uint8_t pot) {
+	return pot ? (li_pot_value_right * 1300 / 4096) : (li_pot_value_left * 1300 / 4096);
 }
 
 void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
