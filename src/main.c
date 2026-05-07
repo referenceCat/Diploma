@@ -39,7 +39,7 @@ void main()
 						| PM_CLOCK_APB_M_EPIC_M;
 	PM->CLK_AHB_SET |= PM_CLOCK_AHB_SPIFI_M;
 
-	UART_Init(UART_1, 3333, UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+	UART_Init(UART_1, 32000000 / 57600, UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
 
 	GPIO_0->DIRECTION_OUT = (1 << 10) | (1 << 9);
 	GPIO_0->OUTPUT = 0;
@@ -120,7 +120,7 @@ void main()
 						| PM_CLOCK_APB_M_EPIC_M;
 	PM->CLK_AHB_SET |= PM_CLOCK_AHB_SPIFI_M;
 
-	UART_Init(UART_1, 3333, UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+	UART_Init(UART_1, 32000000 / 57600, UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
 
 	GPIO_0->DIRECTION_OUT = (1 << 10) | (1 << 9);
 	GPIO_0->OUTPUT = 0;
@@ -128,7 +128,7 @@ void main()
 
 	while (1)
 	{
-		for (int i = 0; i < delay_1ms; i++);
+		for (int i = 0; i < delay_1ms / 2; i++);
 		counter++;
 		li_update();
 
@@ -152,7 +152,7 @@ void main()
 			keyboard_str[i] = ((keyboard_bitmask >> i) & 1) ? '1' :'0';
 		}
 
-		if (counter % 100 == 0) {
+		if (counter % 200 == 0) {
 			xprintf("tick: %d;\tleft  pot: %d (mv);\tright  pot: %d (mv);\tlevers: %s;\tkeyboard: %s \n\r", counter, left_pot_mv, right_pot_mv, levers_str, keyboard_str);
 		}
 	}
