@@ -31,6 +31,12 @@
 #define LI_sW7_PIN 3
 #define LI_sW8_PIN 6
 
+#define LI_ENC0_PORT GPIO_0
+#define LI_ENC1_PORT GPIO_0
+
+#define LI_ENC0_PIN 1
+#define LI_ENC1_PIN 3
+
 #define MIK32V2
 
 #define LI_BTN0_BIT
@@ -81,8 +87,22 @@ static uint32_t li_levers_state_bitmask		= 0;
 static uint32_t li_pot_value_left			= 0;
 static uint32_t li_pot_value_right			= 0;
 
+static int32_t li_enc_counter				= 0;
 static ADC_HandleTypeDef hadc;
 static SPI_HandleTypeDef hspi0;
+
+static void li_poll_enc() {
+	static uint8_t p0 = 0, p1 = 0; // encoder last state
+	uint8_t e0 = (LI_ENC0_PORT->STATE >> LI_ENC0_PIN) & 1;
+	uint8_t e1 = (LI_ENC1_PORT->STATE >> LI_ENC1_PIN) & 1;
+
+	if (p0 ^ p1 ^ e0 ^ e1) {
+		(p1 ^ e0) ? li_enc_counter++ : li_enc_counter--;
+		p0 = e0;
+		p1 = e1;
+	}
+
+}
 
 // https://habr.com/ru/articles/836796/
 static void li_poll_potentiometers() {
@@ -159,6 +179,9 @@ static void li_poll_levers() {
 void li_update() {
 	li_update_counter++;
 
+	// 1 KHz
+	li_poll_enc();
+
 	// 100 Hz
 	if (li_update_counter % 10 == 0) {
 		// pollButtons();
@@ -216,10 +239,17 @@ void li_init() {
 	hspi0.Init.Decoder = SPI_DECODER_NONE;
 	hspi0.Init.ManualCS = SPI_MANUALCS_OFF;
 	hspi0.Init.ChipSelect = SPI_CS_0;
+
+	LI_ENC0_PORT->DIRECTION_IN |= 1 << LI_ENC0_PIN;
+	LI_ENC1_PORT->DIRECTION_IN |= 1 << LI_ENC1_PIN;
 }
 
 uint32_t li_get_levers_bitmask() {
 	return li_levers_state_bitmask;
+}
+
+int32_t li_get_enc_counter() {
+	return li_enc_counter;
 }
 
 enum LI_Pot {
