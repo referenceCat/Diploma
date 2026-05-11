@@ -190,9 +190,9 @@ TODO провести тест: подключить к той же шине SPI
 
 TODO одной картинкой
 
-![](images\buttons_schematics.png)
+![](images/buttons_schematics.png)
 
-![](images\74hc165_schematics.png)
+![](images/74hc165_schematics.png)
 
 _рис.9. Схема подключения кнопок через регистр 74HC165_
 
