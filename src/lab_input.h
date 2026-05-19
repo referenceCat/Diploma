@@ -22,8 +22,8 @@
 #define LI_SW7_PORT GPIO_1
 #define LI_SW8_PORT GPIO_1
 
-#define LI_SW1_PIN 2
-#define LI_SW2_PIN 0
+#define LI_SW1_PIN 8
+#define LI_SW2_PIN 9
 #define LI_SW3_PIN 1
 #define LI_SW4_PIN 4
 #define LI_SW5_PIN 6
@@ -111,10 +111,10 @@ static void li_poll_potentiometers() {
 	        HAL_ADC_SINGLE(hadc.Instance); // Первое измерение для переключение на канал 0.
 	        HAL_ADC_WaitValid(&hadc);
 
-	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 2); // read ch1 (P1.7), then set channel to 2
+	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 1); // read ch1 (P1.7), then set channel to 2
 	        li_pot_value_left = HAL_ADC_WaitAndGetValue(&hadc);
 
-	        HAL_ADC_SINGLE(hadc.Instance); // read ch2 (P0.2)
+	        HAL_ADC_SINGLE_AND_SET_CH(hadc.Instance, 2); // read ch2 (P0.2)
 	        li_pot_value_right = HAL_ADC_WaitAndGetValue(&hadc);
 }
 
