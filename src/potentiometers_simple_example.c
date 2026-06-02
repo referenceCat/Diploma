@@ -1,3 +1,9 @@
+/*
+ * potentiometers_simple_example.c
+ * Reads two potentiometers through the MIK32 ADC, filters the measurements,
+ * and prints raw, millivolt, and percentage values over UART.
+ */
+
 #include "mcu32_memory_map.h"
 #include <power_manager.h>
 

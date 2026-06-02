@@ -1,3 +1,9 @@
+/*
+ * keypad_matrix_example.c
+ * Scans a directly connected matrix keypad by driving columns one by one and
+ * reading row states through GPIO inputs.
+ */
+
 #include "mcu32_memory_map.h"
 // Example based on the working project code, but this file was not tested separately.
 #include <power_manager.h>

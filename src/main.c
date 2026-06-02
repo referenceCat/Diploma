@@ -1,3 +1,9 @@
+/*
+ * main.c
+ * Demo program for the lab_input library. It initializes the input board,
+ * polls all input devices periodically, and prints their states over UART.
+ */
+
 #include "riscv_csr_encoding.h"
 #include "scr1_csr_encoding.h"
 #include "mcu32_memory_map.h"

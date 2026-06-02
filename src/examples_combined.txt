@@ -1,0 +1,863 @@
+/*
+ * ============================================================================
+ * File: main.c
+ * ============================================================================
+ */
+/*
+ * main.c
+ * Demo program for the lab_input library. It initializes the input board,
+ * polls all input devices periodically, and prints their states over UART.
+ */
+
+#include "riscv_csr_encoding.h"
+#include "scr1_csr_encoding.h"
+#include "mcu32_memory_map.h"
+#include <power_manager.h>
+#include "pad_config.h"
+#include <gpio_irq.h>
+#include <epic.h>
+#include <csr.h>
+#include <gpio.h>
+#include "lab_input.h"
+#include "mik32_hal_spi.h"
+#include "mik32_hal_pcc.h"
+#include "mik32_hal_gpio.h"
+#include "mik32_hal_scr1_timer.h"
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+void xputc(char c) // this function is weak-defined in uart_lib.c and uses uart_0
+{
+	UART_WriteByte(UART_1, c);
+	UART_WaitTransmission(UART_1);
+}
+
+
+void main()
+{
+
+	const uint32_t delay_1ms = 32000000 / 1000 / 15;
+	uint32_t counter = 0;
+
+	PM->CLK_APB_P_SET =   PM_CLOCK_APB_P_GPIO_0_M
+						| PM_CLOCK_APB_P_GPIO_1_M
+						| PM_CLOCK_APB_P_GPIO_2_M
+						| PM_CLOCK_APB_P_GPIO_IRQ_M;
+	PM->CLK_APB_M_SET =   PM_CLOCK_APB_M_PAD_CONFIG_M
+						| PM_CLOCK_APB_M_WU_M
+						| PM_CLOCK_APB_M_PM_M
+						| PM_CLOCK_APB_M_EPIC_M;
+	PM->CLK_AHB_SET |= PM_CLOCK_AHB_SPIFI_M;
+
+	UART_Init(UART_1, (32000000 / 57600), UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+	GPIO_0->DIRECTION_OUT = (1 << 10) | (1 << 9);
+	GPIO_0->OUTPUT = 0;
+	li_init();
+
+	while (1)
+	{
+		for (volatile int i = 0; i < delay_1ms / 2; i++);
+		counter++;
+		li_update();
+
+		// blink red LED
+		if (counter % 400 == 0) {
+			GPIO_0->OUTPUT ^= 1 << 10;
+		}
+
+		uint16_t left_pot_mv = li_get_pot_value_mv(Left);
+		uint16_t right_pot_mv = li_get_pot_value_mv(Right);
+		uint16_t levers_bitmask = li_get_levers_bitmask();
+		uint16_t keyboard_bitmask = li_get_keyboard_bitmask();
+
+		char levers_str[9] = {0};
+		for (int i = 0; i < 8; i++) {
+			levers_str[i] = ((levers_bitmask >> i) & 1) ? '1' : '0';
+		}
+
+		char keyboard_str[17] = {0};
+		for (int i = 0; i < 16; i++) {
+			keyboard_str[i] = ((keyboard_bitmask >> i) & 1) ? '1' :'0';
+		}
+
+		int32_t enc_counter = li_get_enc_counter();
+
+		// too slow, causes encoder to miss steps
+		if (counter % 200 == 0) {
+			xprintf("tick: %d;\tleft  pot: %d (mv);\tright  pot: %d (mv);\tlevers: %s;\tkeyboard: %s;\tenc: %d \n\r", counter, left_pot_mv, right_pot_mv, levers_str, keyboard_str, enc_counter);
+		}
+	}
+}
+
+/*
+ * ============================================================================
+ * File: encoder_simple_example.c
+ * ============================================================================
+ */
+/*
+ * encoder_simple_example.c
+ * Reads a quadrature rotary encoder directly through GPIO pins and prints
+ * the accumulated position counter over UART.
+ */
+
+#include "mcu32_memory_map.h"
+#include <power_manager.h>
+#include <gpio.h>
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+#define ENC_A_PORT GPIO_0
+#define ENC_B_PORT GPIO_0
+
+#define ENC_A_PIN 1
+#define ENC_B_PIN 3
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void encoder_init(void)
+{
+    ENC_A_PORT->DIRECTION_IN |= 1 << ENC_A_PIN;
+    ENC_B_PORT->DIRECTION_IN |= 1 << ENC_B_PIN;
+}
+
+static uint8_t encoder_read_state(void)
+{
+    uint8_t a = (ENC_A_PORT->STATE >> ENC_A_PIN) & 1;
+    uint8_t b = (ENC_B_PORT->STATE >> ENC_B_PIN) & 1;
+
+    return (a << 1) | b;
+}
+
+void main(void)
+{
+    int32_t counter = 0;
+    uint8_t previous_state;
+
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    encoder_init();
+    previous_state = encoder_read_state();
+
+    while (1) {
+        uint8_t current_state = encoder_read_state();
+
+        if (current_state != previous_state) {
+            if (((previous_state == 0) && (current_state == 2)) ||
+                ((previous_state == 2) && (current_state == 3)) ||
+                ((previous_state == 3) && (current_state == 1)) ||
+                ((previous_state == 1) && (current_state == 0))) {
+                counter++;
+            } else if (((previous_state == 0) && (current_state == 1)) ||
+                       ((previous_state == 1) && (current_state == 3)) ||
+                       ((previous_state == 3) && (current_state == 2)) ||
+                       ((previous_state == 2) && (current_state == 0))) {
+                counter--;
+            }
+
+            previous_state = current_state;
+            xprintf("encoder: %d\n\r", counter);
+        }
+
+        delay_ms(1);
+    }
+}
+
+/*
+ * ============================================================================
+ * File: keyboard_bitbang_example.c
+ * ============================================================================
+ */
+/*
+ * keyboard_bitbang_example.c
+ * Reads the button keyboard through cascaded 74HC165 shift registers using
+ * manually toggled GPIO lines instead of the SPI peripheral.
+ */
+
+#include "mcu32_memory_map.h"
+// Example based on the working project code, but this file was not tested separately.
+#include <power_manager.h>
+#include "pad_config.h"
+#include <gpio.h>
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+#define HC165_DATA_PORT GPIO_1
+#define HC165_CLK_PORT  GPIO_1
+#define HC165_LOAD_PORT GPIO_1
+
+#define HC165_DATA_PIN 0
+#define HC165_CLK_PIN  2
+#define HC165_LOAD_PIN 6
+
+static const uint8_t button_map[13] = {
+    10, // 0
+    7,  // 1
+    6,  // 2
+    5,  // 3
+    3,  // 4
+    2,  // 5
+    1,  // 6
+    15, // 7
+    0,  // 8
+    14, // 9
+    11, // A
+    9,  // B
+    8   // encoder button
+};
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void delay_us(uint32_t us)
+{
+    while (us--) {
+        for (volatile uint32_t i = 0; i < 20; i++);
+    }
+}
+
+static void pin_high(GPIO_TypeDef *port, uint32_t pin)
+{
+    port->OUTPUT |= 1 << pin;
+}
+
+static void pin_low(GPIO_TypeDef *port, uint32_t pin)
+{
+    port->OUTPUT &= ~(1 << pin);
+}
+
+static uint8_t pin_read(GPIO_TypeDef *port, uint32_t pin)
+{
+    return (port->STATE >> pin) & 1;
+}
+
+static void keyboard_init(void)
+{
+    HC165_DATA_PORT->DIRECTION_IN |= 1 << HC165_DATA_PIN;
+    HC165_CLK_PORT->DIRECTION_OUT |= 1 << HC165_CLK_PIN;
+    HC165_LOAD_PORT->DIRECTION_OUT |= 1 << HC165_LOAD_PIN;
+
+    pin_low(HC165_CLK_PORT, HC165_CLK_PIN);
+    pin_high(HC165_LOAD_PORT, HC165_LOAD_PIN);
+}
+
+static uint16_t keyboard_read_raw(void)
+{
+    uint16_t data = 0;
+
+    pin_low(HC165_LOAD_PORT, HC165_LOAD_PIN);
+    delay_us(1);
+    pin_high(HC165_LOAD_PORT, HC165_LOAD_PIN);
+    delay_us(1);
+
+    for (uint8_t i = 0; i < 16; i++) {
+        data |= pin_read(HC165_DATA_PORT, HC165_DATA_PIN) << i;
+
+        pin_high(HC165_CLK_PORT, HC165_CLK_PIN);
+        delay_us(1);
+        pin_low(HC165_CLK_PORT, HC165_CLK_PIN);
+        delay_us(1);
+    }
+
+    return data;
+}
+
+static uint16_t keyboard_read_buttons(void)
+{
+    uint16_t raw = keyboard_read_raw();
+    uint16_t buttons = 0;
+
+    for (uint8_t i = 0; i < 13; i++) {
+        buttons |= ((raw >> button_map[i]) & 1) << i;
+    }
+
+    return buttons;
+}
+
+void main(void)
+{
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M
+                      | PM_CLOCK_APB_P_GPIO_1_M
+                      | PM_CLOCK_APB_P_GPIO_2_M;
+    PM->CLK_APB_M_SET = PM_CLOCK_APB_M_PAD_CONFIG_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    keyboard_init();
+
+    while (1) {
+        uint16_t buttons = keyboard_read_buttons();
+
+        xprintf("keyboard: 0:%d 1:%d 2:%d 3:%d 4:%d 5:%d 6:%d 7:%d 8:%d 9:%d A:%d B:%d ENC:%d\n\r",
+                (buttons >> 0) & 1,
+                (buttons >> 1) & 1,
+                (buttons >> 2) & 1,
+                (buttons >> 3) & 1,
+                (buttons >> 4) & 1,
+                (buttons >> 5) & 1,
+                (buttons >> 6) & 1,
+                (buttons >> 7) & 1,
+                (buttons >> 8) & 1,
+                (buttons >> 9) & 1,
+                (buttons >> 10) & 1,
+                (buttons >> 11) & 1,
+                (buttons >> 12) & 1);
+
+        delay_ms(100);
+    }
+}
+
+/*
+ * ============================================================================
+ * File: keyboard_simple_example.c
+ * ============================================================================
+ */
+/*
+ * keyboard_simple_example.c
+ * Reads the button keyboard through cascaded 74HC165 shift registers using
+ * SPI1 and prints the decoded button bitmask over UART.
+ */
+
+#include "mcu32_memory_map.h"
+// Example based on the working project code, but this file was not tested separately.
+#include <power_manager.h>
+#include "mik32_hal_spi.h"
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+static SPI_HandleTypeDef hspi;
+
+static const uint8_t button_map[13] = {
+    10, // 0
+    7,  // 1
+    6,  // 2
+    5,  // 3
+    3,  // 4
+    2,  // 5
+    1,  // 6
+    15, // 7
+    0,  // 8
+    14, // 9
+    11, // A
+    9,  // B
+    8   // encoder button
+};
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void keyboard_init(void)
+{
+    hspi.Instance = SPI_1;
+    hspi.Init.SPI_Mode = HAL_SPI_MODE_MASTER;
+    hspi.Init.CLKPhase = SPI_PHASE_ON;
+    hspi.Init.CLKPolarity = SPI_POLARITY_HIGH;
+    hspi.Init.ThresholdTX = 4;
+    hspi.Init.BaudRateDiv = SPI_BAUDRATE_DIV256;
+    hspi.Init.Decoder = SPI_DECODER_NONE;
+    hspi.Init.ManualCS = SPI_MANUALCS_ON;
+    hspi.Init.ChipSelect = SPI_CS_2;
+
+    if (HAL_SPI_Init(&hspi) != HAL_OK) {
+        while (1);
+    }
+}
+
+static uint16_t keyboard_read_raw(void)
+{
+    uint16_t data = 0;
+
+    HAL_SPI_Enable(&hspi);
+    HAL_SPI_CS_Disable(&hspi);
+
+    if (HAL_SPI_Exchange(&hspi, (uint8_t *)&data, (uint8_t *)&data,
+                         2, SPI_TIMEOUT_DEFAULT) != HAL_OK) {
+        while (1);
+    }
+
+    HAL_SPI_CS_Enable(&hspi, SPI_CS_2);
+    HAL_SPI_Disable(&hspi);
+
+    return data;
+}
+
+static uint16_t keyboard_read_buttons(void)
+{
+    uint16_t raw = keyboard_read_raw();
+    uint16_t buttons = 0;
+
+    for (uint8_t i = 0; i < 13; i++) {
+        buttons |= ((raw >> button_map[i]) & 1) << i;
+    }
+
+    return buttons;
+}
+
+void main(void)
+{
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M
+                      | PM_CLOCK_APB_P_GPIO_1_M
+                      | PM_CLOCK_APB_P_GPIO_2_M;
+    PM->CLK_APB_M_SET = PM_CLOCK_APB_M_PAD_CONFIG_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    keyboard_init();
+
+    while (1) {
+        uint16_t buttons = keyboard_read_buttons();
+
+        xprintf("keyboard: 0:%d 1:%d 2:%d 3:%d 4:%d 5:%d 6:%d 7:%d 8:%d 9:%d A:%d B:%d ENC:%d\n\r",
+                (buttons >> 0) & 1,
+                (buttons >> 1) & 1,
+                (buttons >> 2) & 1,
+                (buttons >> 3) & 1,
+                (buttons >> 4) & 1,
+                (buttons >> 5) & 1,
+                (buttons >> 6) & 1,
+                (buttons >> 7) & 1,
+                (buttons >> 8) & 1,
+                (buttons >> 9) & 1,
+                (buttons >> 10) & 1,
+                (buttons >> 11) & 1,
+                (buttons >> 12) & 1);
+
+        delay_ms(100);
+    }
+}
+
+/*
+ * ============================================================================
+ * File: keypad_matrix_example.c
+ * ============================================================================
+ */
+/*
+ * keypad_matrix_example.c
+ * Scans a directly connected matrix keypad by driving columns one by one and
+ * reading row states through GPIO inputs.
+ */
+
+#include "mcu32_memory_map.h"
+// Example based on the working project code, but this file was not tested separately.
+#include <power_manager.h>
+#include <gpio.h>
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+/*
+ * Matrix keypad example for the pins used in the diploma text.
+ *
+ * Inputs are pulled up to 3.3 V:
+ *   P1.2, P1.0, P1.1, P1.4
+ *
+ * Outputs are high by default and are driven low one by one:
+ *   P2.6, P2.7, P1.3, P1.6
+ *
+ * With the listed pins this is a 4x4 matrix.
+ */
+
+#define MATRIX_ROWS 4
+#define MATRIX_COLS 4
+
+static GPIO_TypeDef *const row_ports[MATRIX_ROWS] = {
+    GPIO_1, GPIO_1, GPIO_1, GPIO_1
+};
+
+static const uint8_t row_pins[MATRIX_ROWS] = {
+    2, 0, 1, 4
+};
+
+static GPIO_TypeDef *const col_ports[MATRIX_COLS] = {
+    GPIO_2, GPIO_2, GPIO_1, GPIO_1
+};
+
+static const uint8_t col_pins[MATRIX_COLS] = {
+    6, 7, 3, 6
+};
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void delay_us(uint32_t us)
+{
+    while (us--) {
+        for (volatile uint32_t i = 0; i < 20; i++);
+    }
+}
+
+static void pin_high(GPIO_TypeDef *port, uint8_t pin)
+{
+    port->OUTPUT |= 1 << pin;
+}
+
+static void pin_low(GPIO_TypeDef *port, uint8_t pin)
+{
+    port->OUTPUT &= ~(1 << pin);
+}
+
+static uint8_t pin_read(GPIO_TypeDef *port, uint8_t pin)
+{
+    return (port->STATE >> pin) & 1;
+}
+
+static void keypad_init(void)
+{
+    for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+        row_ports[row]->DIRECTION_IN |= 1 << row_pins[row];
+    }
+
+    for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+        col_ports[col]->DIRECTION_OUT |= 1 << col_pins[col];
+        pin_high(col_ports[col], col_pins[col]);
+    }
+}
+
+static uint16_t keypad_scan(void)
+{
+    uint16_t keys = 0;
+
+    for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+        pin_low(col_ports[col], col_pins[col]);
+        delay_us(5);
+
+        for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+            /*
+             * Rows are pulled up, so pressed key reads as 0
+             * when the selected column is driven low.
+             */
+            if (!pin_read(row_ports[row], row_pins[row])) {
+                keys |= 1 << (col * MATRIX_ROWS + row);
+            }
+        }
+
+        pin_high(col_ports[col], col_pins[col]);
+    }
+
+    return keys;
+}
+
+void main(void)
+{
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M
+                      | PM_CLOCK_APB_P_GPIO_1_M
+                      | PM_CLOCK_APB_P_GPIO_2_M;
+    PM->CLK_APB_M_SET = PM_CLOCK_APB_M_PAD_CONFIG_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    keypad_init();
+
+    while (1) {
+        uint16_t keys = keypad_scan();
+
+        xprintf("matrix: %04x\n\r", keys);
+        delay_ms(100);
+    }
+}
+
+/*
+ * ============================================================================
+ * File: levers_simple_example.c
+ * ============================================================================
+ */
+/*
+ * levers_simple_example.c
+ * Reads eight lever switches through GPIO inputs with pull-up configuration
+ * and prints their state bitmask over UART.
+ */
+
+#include "mcu32_memory_map.h"
+#include <power_manager.h>
+#include "pad_config.h"
+#include <gpio.h>
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+#define SW1_PORT GPIO_1
+#define SW2_PORT GPIO_1
+#define SW3_PORT GPIO_1
+#define SW4_PORT GPIO_1
+#define SW5_PORT GPIO_2
+#define SW6_PORT GPIO_2
+#define SW7_PORT GPIO_1
+#define SW8_PORT GPIO_1
+
+#define SW1_PIN 2
+#define SW2_PIN 0
+#define SW3_PIN 1
+#define SW4_PIN 4
+#define SW5_PIN 6
+#define SW6_PIN 7
+#define SW7_PIN 3
+#define SW8_PIN 6
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void levers_init(void)
+{
+    SW1_PORT->DIRECTION_IN |= 1 << SW1_PIN;
+    SW2_PORT->DIRECTION_IN |= 1 << SW2_PIN;
+    SW3_PORT->DIRECTION_IN |= 1 << SW3_PIN;
+    SW4_PORT->DIRECTION_IN |= 1 << SW4_PIN;
+    SW5_PORT->DIRECTION_IN |= 1 << SW5_PIN;
+    SW6_PORT->DIRECTION_IN |= 1 << SW6_PIN;
+    SW7_PORT->DIRECTION_IN |= 1 << SW7_PIN;
+    SW8_PORT->DIRECTION_IN |= 1 << SW8_PIN;
+
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW1_PIN * 2 + 1);
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW2_PIN * 2 + 1);
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW3_PIN * 2 + 1);
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW4_PIN * 2 + 1);
+    PAD_CONFIG->PORT_2_PUPD |= 1 << (SW5_PIN * 2 + 1);
+    PAD_CONFIG->PORT_2_PUPD |= 1 << (SW6_PIN * 2 + 1);
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW7_PIN * 2 + 1);
+    PAD_CONFIG->PORT_1_PUPD |= 1 << (SW8_PIN * 2 + 1);
+}
+
+static uint8_t levers_read(void)
+{
+    uint8_t state = 0;
+
+    state |= ((SW1_PORT->STATE >> SW1_PIN) & 1) << 0;
+    state |= ((SW2_PORT->STATE >> SW2_PIN) & 1) << 1;
+    state |= ((SW3_PORT->STATE >> SW3_PIN) & 1) << 2;
+    state |= ((SW4_PORT->STATE >> SW4_PIN) & 1) << 3;
+    state |= ((SW5_PORT->STATE >> SW5_PIN) & 1) << 4;
+    state |= ((SW6_PORT->STATE >> SW6_PIN) & 1) << 5;
+    state |= ((SW7_PORT->STATE >> SW7_PIN) & 1) << 6;
+    state |= ((SW8_PORT->STATE >> SW8_PIN) & 1) << 7;
+
+    return state;
+}
+
+void main(void)
+{
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M
+                      | PM_CLOCK_APB_P_GPIO_1_M
+                      | PM_CLOCK_APB_P_GPIO_2_M;
+    PM->CLK_APB_M_SET = PM_CLOCK_APB_M_PAD_CONFIG_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    levers_init();
+
+    while (1) {
+        uint8_t levers = levers_read();
+
+        xprintf("levers: %d%d%d%d%d%d%d%d\n\r",
+                (levers >> 0) & 1,
+                (levers >> 1) & 1,
+                (levers >> 2) & 1,
+                (levers >> 3) & 1,
+                (levers >> 4) & 1,
+                (levers >> 5) & 1,
+                (levers >> 6) & 1,
+                (levers >> 7) & 1);
+
+        delay_ms(100);
+    }
+}
+
+/*
+ * ============================================================================
+ * File: potentiometers_simple_example.c
+ * ============================================================================
+ */
+/*
+ * potentiometers_simple_example.c
+ * Reads two potentiometers through the MIK32 ADC, filters the measurements,
+ * and prints raw, millivolt, and percentage values over UART.
+ */
+
+#include "mcu32_memory_map.h"
+#include <power_manager.h>
+
+#include "mik32_hal_adc.h"
+#include "mik32_hal_gpio.h"
+
+#include "uart_lib.h"
+#include "xprintf.h"
+
+#define POT_LEFT_CHANNEL  1
+#define POT_RIGHT_CHANNEL 2
+
+#define ADC_MAX_VALUE 4095
+#define ADC_REF_MV    1300
+
+static ADC_HandleTypeDef hadc;
+
+void xputc(char c)
+{
+    UART_WriteByte(UART_1, c);
+    UART_WaitTransmission(UART_1);
+}
+
+static void delay_ms(uint32_t ms)
+{
+    const uint32_t delay_1ms = 32000000 / 1000 / 15;
+
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < delay_1ms; i++);
+    }
+}
+
+static void adc_init(void)
+{
+    hadc.Instance = ANALOG_REG;
+    hadc.Init.Sel = ADC_CHANNEL0;
+    hadc.Init.EXTRef = ADC_EXTREF_OFF;
+    hadc.Init.EXTClb = ADC_EXTCLB_ADCREF;
+    HAL_ADC_Init(&hadc);
+}
+
+static uint16_t adc_read_channel(uint8_t channel)
+{
+    ADC_SEL_CHANNEL(hadc.Instance, channel);
+
+    HAL_ADC_SINGLE(hadc.Instance);
+    HAL_ADC_WaitValid(&hadc);
+
+    HAL_ADC_SINGLE(hadc.Instance);
+    return HAL_ADC_WaitAndGetValue(&hadc);
+}
+
+static uint16_t filter_adc(uint16_t previous, uint16_t current)
+{
+    return (previous * 7 + current) / 8;
+}
+
+static uint16_t adc_to_mv(uint16_t value)
+{
+    return (uint32_t)value * ADC_REF_MV / (ADC_MAX_VALUE + 1);
+}
+
+static uint8_t adc_to_percent(uint16_t value)
+{
+    return (uint32_t)value * 100 / ADC_MAX_VALUE;
+}
+
+void main(void)
+{
+    uint16_t left_filtered = 0;
+    uint16_t right_filtered = 0;
+
+    PM->CLK_APB_P_SET = PM_CLOCK_APB_P_GPIO_0_M
+                      | PM_CLOCK_APB_P_GPIO_1_M;
+
+    UART_Init(UART_1, (32000000 / 57600),
+              UART_CONTROL1_TE_M | UART_CONTROL1_M_8BIT_M, 0, 0);
+
+    adc_init();
+
+    left_filtered = adc_read_channel(POT_LEFT_CHANNEL);
+    right_filtered = adc_read_channel(POT_RIGHT_CHANNEL);
+
+    while (1) {
+        uint16_t left_raw = adc_read_channel(POT_LEFT_CHANNEL);
+        uint16_t right_raw = adc_read_channel(POT_RIGHT_CHANNEL);
+
+        left_filtered = filter_adc(left_filtered, left_raw);
+        right_filtered = filter_adc(right_filtered, right_raw);
+
+        xprintf("left: raw=%d, %d mV, %d%%; right: raw=%d, %d mV, %d%%\n\r",
+                left_filtered,
+                adc_to_mv(left_filtered),
+                adc_to_percent(left_filtered),
+                right_filtered,
+                adc_to_mv(right_filtered),
+                adc_to_percent(right_filtered));
+
+        delay_ms(50);
+    }
+}
+
+void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    __HAL_PCC_ANALOG_REGS_CLK_ENABLE();
+
+    GPIO_InitStruct.Mode = HAL_GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = HAL_GPIO_PULL_NONE;
+
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_2;
+    HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
+}

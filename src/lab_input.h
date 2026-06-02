@@ -1,8 +1,6 @@
 /*
  * user_input.h
  *
- *  Created on: 30 april 2026 г.
- *      Author: Buyanov Mikhail
  */
 
 #ifndef USER_INPUT_H_
@@ -34,8 +32,10 @@
 #define LI_ENC0_PORT GPIO_0
 #define LI_ENC1_PORT GPIO_0
 
-#define LI_ENC0_PIN 1
-#define LI_ENC1_PIN 3
+#define LI_ENC0_PIN 8
+#define LI_ENC1_PIN 9
+
+#define LI_SPI_CS SPI_CS_1
 
 #define MIK32V2
 
@@ -160,7 +160,7 @@ static void li_poll_keyboard() {
     /* Конец передачи в ручном режиме управления CS */
     if (hspi.Init.ManualCS == SPI_MANUALCS_ON)
     {
-        HAL_SPI_CS_Enable(&hspi, SPI_CS_2);
+        HAL_SPI_CS_Enable(&hspi, LI_SPI_CS);
         HAL_SPI_Disable(&hspi);
     }
 
@@ -246,7 +246,7 @@ void li_init() {
 	hspi.Init.BaudRateDiv = SPI_BAUDRATE_DIV256;
 	hspi.Init.Decoder = SPI_DECODER_NONE;
 	hspi.Init.ManualCS = SPI_MANUALCS_ON;
-	hspi.Init.ChipSelect = SPI_CS_2;
+	hspi.Init.ChipSelect = LI_SPI_CS;
 
 	 if (HAL_SPI_Init(&hspi) != HAL_OK)
 		 while (1);
@@ -293,10 +293,10 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
     HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);
 
     /* Настройка выводов АЦП */
-    GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_7;
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
     HAL_GPIO_Init(GPIO_1, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_7 | GPIO_PIN_9;
+    GPIO_InitStruct.Pin = GPIO_PIN_2;
     HAL_GPIO_Init(GPIO_0, &GPIO_InitStruct);
 }
 

@@ -1,3 +1,9 @@
+/*
+ * keyboard_simple_example.c
+ * Reads the button keyboard through cascaded 74HC165 shift registers using
+ * SPI1 and prints the decoded button bitmask over UART.
+ */
+
 #include "mcu32_memory_map.h"
 // Example based on the working project code, but this file was not tested separately.
 #include <power_manager.h>

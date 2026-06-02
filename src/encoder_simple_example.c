@@ -1,3 +1,9 @@
+/*
+ * encoder_simple_example.c
+ * Reads a quadrature rotary encoder directly through GPIO pins and prints
+ * the accumulated position counter over UART.
+ */
+
 #include "mcu32_memory_map.h"
 #include <power_manager.h>
 #include <gpio.h>

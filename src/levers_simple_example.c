@@ -1,3 +1,9 @@
+/*
+ * levers_simple_example.c
+ * Reads eight lever switches through GPIO inputs with pull-up configuration
+ * and prints their state bitmask over UART.
+ */
+
 #include "mcu32_memory_map.h"
 #include <power_manager.h>
 #include "pad_config.h"
